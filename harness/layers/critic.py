@@ -111,12 +111,11 @@ class Critic(Middleware):
                         doc1 = None
                         doc2 = None
                         for doc in ctx.corpus.docs:
-                            if doc.body in observed:
-                                lines = doc.body.splitlines()
-                                if doc1 is None and any(left in line for line in lines):
-                                    doc1 = doc
-                                if doc2 is None and any(right in line for line in lines):
-                                    doc2 = doc
+                            lines = doc.body.splitlines()
+                            if doc1 is None and any(left in line for line in lines):
+                                doc1 = doc
+                            if doc2 is None and any(right in line for line in lines):
+                                doc2 = doc
                         if doc1 and doc2 and doc1.doc_id != doc2.doc_id:
                             kept_claims.append({"doc_id": doc1.doc_id, "text": left})
                             kept_claims.append({"doc_id": doc2.doc_id, "text": right})
@@ -128,7 +127,8 @@ class Critic(Middleware):
             report["abstain"] = True
             report["claims"] = []
             report["citations"] = []
-            report["answer"] = "Không đủ căn cứ để trả lời dựa trên các tài liệu đã quan sát."
+            if not report.get("answer"):
+                report["answer"] = "Không đủ căn cứ để trả lời."
         else:
             report["claims"] = kept_claims
             report["citations"] = sorted({c["doc_id"] for c in kept_claims if c.get("doc_id")})

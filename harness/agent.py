@@ -506,6 +506,11 @@ class ReActAgent:
 
         self.trace.emit("agent_start", brief_id=str(brief.get("brief_id", "")))
 
+        inner = getattr(self.model, "inner", self.model)
+        from arena.model import RealModel
+        if isinstance(inner, RealModel) and self.system_prompt == ARENA_SYSTEM_PROMPT:
+            self.system_prompt = ARENA_SYSTEM_PROMPT_REAL
+
         ctx.messages = [
             {"role": "system", "content": self.system_prompt},
             {"role": "user", "content": ctx.question},
@@ -597,6 +602,20 @@ class ReActAgent:
 
         if _is_report_payload(parsed.final):
             action = _action_under_final(text)
+            if action is None and self._final_deferrals < MAX_FINAL_DEFERRALS:
+                inner = getattr(self.model, "inner", self.model)
+                from arena.model import RealModel
+                if (
+                    isinstance(inner, RealModel)
+                    and self.last_context is not None
+                    and len(self.last_context.observations) == 0
+                ):
+                    self._final_deferrals += 1
+                    self._refused_final = parsed.final
+                    return parse_output(
+                        f'THOUGHT: Cần tìm kiếm tài liệu trước khi đưa ra kết luận.\n'
+                        f'ACTION: {{"tool": "search", "args": {{"query": {json.dumps(self.last_context.question)}, "k": 5}}}}'
+                    )
             if action is None or self._final_deferrals >= MAX_FINAL_DEFERRALS:
                 return parsed
             self._final_deferrals += 1

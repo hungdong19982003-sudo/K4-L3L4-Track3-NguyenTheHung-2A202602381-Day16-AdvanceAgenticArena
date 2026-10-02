@@ -68,11 +68,27 @@ class CitationChecker(Middleware):
     name = "citation_checker"
 
     def after_agent(self, ctx, report):
+        import json
         claims = report.get("claims")
         if not isinstance(claims, list) or not claims or ctx.corpus is None:
             return report
 
-        observed = ctx.observed_text or ""
+        # Replay the trace using the same logic as arena.scorer._read_trace to know which docs are retrieved
+        retrieved_doc_ids = set()
+        if hasattr(ctx, "trace") and hasattr(ctx.trace, "to_jsonl"):
+            for line in ctx.trace.to_jsonl().splitlines():
+                try:
+                    rec = json.loads(line)
+                    if rec.get("event") == "tool_call":
+                        name = rec.get("name")
+                        if name == "fetch_doc" and rec.get("doc_id"):
+                            retrieved_doc_ids.add(rec["doc_id"])
+                        elif name == "search" and rec.get("query"):
+                            k = rec.get("k") or 5
+                            for d in ctx.corpus.search(rec["query"], k=int(k)):
+                                retrieved_doc_ids.add(d.doc_id)
+                except Exception:
+                    pass
 
         for claim in claims:
             if not isinstance(claim, dict):
@@ -84,13 +100,29 @@ class CitationChecker(Middleware):
             current_doc_id = claim.get("doc_id")
             current_doc = ctx.corpus.get(current_doc_id) if current_doc_id else None
 
-            if current_doc and any(text in line for line in current_doc.body.splitlines()):
+            # If current doc is already in retrieved docs and supports the line, keep it
+            if (
+                current_doc
+                and (not retrieved_doc_ids or current_doc_id in retrieved_doc_ids)
+                and any(text in line for line in current_doc.body.splitlines())
+            ):
                 continue
 
-            for doc in ctx.corpus.docs:
-                if doc.body in observed and any(text in line for line in doc.body.splitlines()):
-                    claim["doc_id"] = doc.doc_id
+            # Otherwise, find a document in retrieved_doc_ids that contains this line
+            found_doc_id = None
+            candidate_docs = [ctx.corpus.get(did) for did in retrieved_doc_ids if ctx.corpus.get(did)] if retrieved_doc_ids else ctx.corpus.docs
+            for doc in candidate_docs:
+                if doc and any(text in line for line in doc.body.splitlines()):
+                    found_doc_id = doc.doc_id
                     break
+
+            if found_doc_id:
+                claim["doc_id"] = found_doc_id
+            elif not current_doc:
+                for doc in ctx.corpus.docs:
+                    if doc and any(text in line for line in doc.body.splitlines()):
+                        claim["doc_id"] = doc.doc_id
+                        break
 
         report["citations"] = sorted({c["doc_id"] for c in claims if isinstance(c, dict) and c.get("doc_id")})
         return report
